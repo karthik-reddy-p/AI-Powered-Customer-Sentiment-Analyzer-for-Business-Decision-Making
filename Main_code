@@ -1,0 +1,99 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import spacy
+from transformers import pipeline
+import torch
+from bertopic import BERTopic
+from umap import UMAP
+from hdbscan import HDBSCAN
+import warnings
+warnings.filterwarnings('ignore')
+
+#Load dataset
+df = pd.read_csv('Womens_Clothing_E-Commerce_Reviews.csv')
+df = df[['Review Text', 'Rating']].rename(columns={'Review Text': 'text', 'Rating': 'rating'})
+df = df.dropna(subset=['text'])
+
+#Preprocess with SpaCy
+nlp = spacy.load("en_core_web_sm")
+def preprocess(text):
+    doc = nlp(str(text).lower())
+    return ' '.join([token.lemma_ for token in doc if not token.is_stop and not token.is_punct])
+df['processed_text'] = df['text'].apply(preprocess)
+print(f"Dataset shape: {df.shape}")
+print(df.head())
+
+#Sentiment Analysis
+print("\nStep 3: Sentiment Analysis...")
+sentiment_pipeline = pipeline(
+    "sentiment-analysis",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    device=0 if torch.cuda.is_available() else -1
+)
+def analyze_sentiment(text):
+    if len(str(text).strip()) == 0:
+        return "NEUTRAL", 0.5
+    result = sentiment_pipeline(str(text))[0]
+    return result['label'], result['score']
+
+df['sentiment_label'], df['sentiment_score'] = zip(*df['text'].apply(analyze_sentiment))
+print(df[['text', 'sentiment_label', 'sentiment_score']].head())
+
+#Emotion Detection
+print("\nStep 4: Emotion Detection...")
+emotion_pipeline = pipeline(
+    "text-classification",
+    model="j-hartmann/emotion-english-distilroberta-base",
+    return_all_scores=True,
+    device=0 if torch.cuda.is_available() else -1
+)
+def analyze_emotions(text):
+    results = emotion_pipeline(str(text))[0]
+    emotions = {res['label']: res['score'] for res in results}
+    dominant_emotion = max(emotions, key=emotions.get)
+    total = sum(emotions.values())
+    normalized = {k: v / total for k, v in emotions.items()}
+    return dominant_emotion, normalized
+df['dominant_emotion'], df['emotions_dict'] = zip(*df['text'].apply(analyze_emotions))
+print(df[['text', 'dominant_emotion', 'emotions_dict']].head(1).to_dict('records'))
+
+#Topic Modeling
+topic_model = BERTopic(
+    umap_model=UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric='cosine'),
+    hdbscan_model=HDBSCAN(min_cluster_size=10, metric='euclidean', prediction_data=True),
+    language="english",
+    calculate_probabilities=True,
+    verbose=True
+)
+topics, probs = topic_model.fit_transform(df['processed_text'].fillna(''))
+df['topic'] = topics
+np.save('topic_probabilities.npy', probs)  # Save topic probabilities separately if needed
+
+#Map topics to categories
+category_map = {-1: "Outlier/Neutral"}
+df['category'] = df['topic'].map(category_map).fillna("Other")
+
+#Visualizations
+sns.set_style("whitegrid")
+plt.style.use('default')
+
+# Sentiment Distribution
+plt.figure(figsize=(10,5))
+sns.countplot(data=df, x='sentiment_label', palette='viridis')
+plt.title('Sentiment Distribution')
+plt.savefig('sentiment_distribution.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Emotion Pie Chart
+emotion_counts = df['dominant_emotion'].value_counts()
+plt.figure(figsize=(8,8))
+plt.pie(emotion_counts.values, labels=emotion_counts.index, autopct='%1.1f%%', startangle=90)
+plt.title('Dominant Emotions')
+plt.savefig('emotion_pie.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+#Save Processed Dataset
+df.to_csv('processed_feedback.csv', index=False)
+print(f"\nProcessed data saved to 'processed_feedback.csv'. Total records: {len(df)}")

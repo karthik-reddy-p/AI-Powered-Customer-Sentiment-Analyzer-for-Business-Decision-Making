@@ -1,0 +1,14 @@
+streamlit==1.50.0
+pandas==2.3.3
+seaborn==0.13.2
+matplotlib==3.10.6
+bertopic==0.17.3
+scikit-learn==1.7.2
+sentence-transformers==5.1.1
+spacy==3.8.7
+transformers==4.56.2
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+umap-learn==0.5.9.post2
+plotly==6.3.0
